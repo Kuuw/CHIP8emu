@@ -2,11 +2,11 @@
 #ifndef CHIP8_H
 #define CHIP8_H
 
-#endif //CHIP8_H
 class chip8 {
 public:
     void initialize();
     void emulate_cycle();
+    void set_key(int key_index, bool pressed);
 
     unsigned short opcode; // Current opcode
     unsigned char memory[4096]; // Memory (4KB)
@@ -22,7 +22,7 @@ public:
     bool drawFlag; // Flag to indicate if the screen should be redrawn
 };
 
-inline unsigned char chip8_font[80] = {
+inline const unsigned char chip8_font[80] = {
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
     0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
@@ -40,3 +40,5 @@ inline unsigned char chip8_font[80] = {
     0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
     0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
+
+#endif //CHIP8_H
