@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <ctime>
+#include <math.h>
 
 // Window and rendering constants
 const int SCREEN_WIDTH = 640;
@@ -16,6 +17,18 @@ const int PIXEL_SIZE = 10; // Each CHIP8 pixel will be 10x10 pixels on screen
 SDL_Window *window = nullptr;
 SDL_Renderer *renderer = nullptr;
 chip8 myChip8;
+
+// Audio variables
+SDL_AudioDeviceID audioDevice = 0;
+SDL_AudioStream* audioStream = nullptr;
+bool soundEnabled = false;
+
+struct BeepGenerator {
+    float phase = 0.0f;
+    float frequency = 440.0f; // A4 note
+    bool active = false;
+};
+BeepGenerator beepGen;
 
 // CHIP8 key mapping (hex keypad layout)
 // 1 2 3 4
@@ -41,7 +54,7 @@ bool loadROM(const std::string &filename)
     std::streamsize size = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    std::vector<unsigned char> buffer(size); // Changed from char to unsigned char
+    std::vector<unsigned char> buffer(size);
     if (file.read(reinterpret_cast<char *>(buffer.data()), size))
     {
         size_t maxSize = 4096 - 0x200;
@@ -90,8 +103,37 @@ bool initSDL()
     return true;
 }
 
+// Start beep sound
+void startBeep() {
+    if (soundEnabled) {
+        beepGen.active = true;
+        SDL_ResumeAudioDevice(audioDevice);
+    }
+}
+
+// Stop beep sound
+void stopBeep() {
+    if (soundEnabled) {
+        beepGen.active = false;
+        SDL_PauseAudioDevice(audioDevice);
+    }
+}
+
+// Cleanup audio
+void cleanupAudio() {
+    if (audioStream) {
+        SDL_DestroyAudioStream(audioStream);
+        audioStream = nullptr;
+    }
+    if (audioDevice) {
+        SDL_CloseAudioDevice(audioDevice);
+        audioDevice = 0;
+    }
+}
+
 void cleanupSDL()
 {
+    cleanupAudio();
     if (renderer)
     {
         SDL_DestroyRenderer(renderer);
@@ -103,6 +145,55 @@ void cleanupSDL()
         window = nullptr;
     }
     SDL_Quit();
+}
+
+// Audio callback for simple beep
+void beepCallback(void* userdata, SDL_AudioStream* stream, int additional_amount, int total_amount) {
+    BeepGenerator* gen = (BeepGenerator*)userdata;
+    if (!gen->active) return;
+
+    const int samples = total_amount / sizeof(float);
+    float* buffer = new float[samples];
+
+    for (int i = 0; i < samples; i++) {
+        buffer[i] = 0.3f * sinf(gen->phase); // 0.3 amplitude
+        gen->phase += 2.0f * M_PI * gen->frequency / 44100.0f;
+        if (gen->phase >= 2.0f * M_PI) gen->phase -= 2.0f * M_PI;
+    }
+
+    SDL_PutAudioStreamData(stream, buffer, samples * sizeof(float));
+    delete[] buffer;
+}
+
+// Initialize audio for beep
+bool initAudio() {
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
+        std::cerr << "Audio init failed: " << SDL_GetError() << std::endl;
+        return false;
+    }
+
+    SDL_AudioSpec spec;
+    spec.freq = 44100;
+    spec.format = SDL_AUDIO_F32;
+    spec.channels = 1;
+
+    audioDevice = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec);
+    if (!audioDevice) {
+        std::cerr << "Audio device failed: " << SDL_GetError() << std::endl;
+        return false;
+    }
+
+    audioStream = SDL_CreateAudioStream(&spec, &spec);
+    if (!audioStream) {
+        std::cerr << "Audio stream failed: " << SDL_GetError() << std::endl;
+        return false;
+    }
+
+    SDL_BindAudioStream(audioDevice, audioStream);
+    SDL_SetAudioStreamGetCallback(audioStream, beepCallback, &beepGen);
+
+    soundEnabled = true;
+    return true;
 }
 
 void drawGraphics()
@@ -221,34 +312,25 @@ void chip8::initialize()
 void chip8::emulate_cycle()
 {
     opcode = memory[pc] << 8 | memory[pc + 1]; // Fetch opcode
-
     switch (opcode & 0xF000)
     {
     case 0x0000:
         switch (opcode & 0x00FF)
         {
         case 0x00E0: // Clear the display
-            for (unsigned char &i : gfx)
+            for (unsigned char & i : gfx)
             {
                 i = 0;
             }
-            drawFlag = true; // Set draw flag for screen clear
+            drawFlag = true;
             pc += 2;
             break;
         case 0x00EE: // Return from subroutine
-            if (sp > 0)
-            {
-                --sp;
-                pc = stack[sp];
-            }
-            else
-            {
-                std::cerr << "Stack underflow!" << std::endl;
-                return;
-            }
+            --sp;
+            pc = stack[sp] + 0x200;
             break;
         default:
-            std::cerr << "Unknown opcode: " << std::hex << opcode << std::endl;
+            std::cerr << "Unknown opcode: " << std::hex << opcode << " at PC: " << std::hex << pc << std::endl;
             pc += 2;
         }
         break;
@@ -308,15 +390,19 @@ void chip8::emulate_cycle()
         {            // 0x8XY-
         case 0x0000: // Sets VX to the value of VY.
             V[(opcode & 0x0F00) >> 8] = V[(opcode & 0x00F0) >> 4];
+            pc += 2;
             break;
         case 0x0001: // Sets VX to VX or VY (bitwise).
             V[(opcode & 0x0F00) >> 8] |= V[(opcode & 0x00F0) >> 4];
+            pc += 2;
             break;
         case 0x0002: // Sets VX to VX and VY (bitwise).
             V[(opcode & 0x0F00) >> 8] &= V[(opcode & 0x00F0) >> 4];
+            pc += 2;
             break;
         case 0x0003: // Sets VX to VX xor VY (bitwise).
             V[(opcode & 0x0F00) >> 8] ^= V[(opcode & 0x00F0) >> 4];
+            pc += 2;
             break;
         case 0x0004: // Adds VY to VX, VF is set to 1 when there is a overflow, and 0 when there is not.
             if (V[(opcode & 0x00F0) >> 4] > (0xFF - V[(opcode & 0x0F00) >> 8]))
@@ -328,6 +414,7 @@ void chip8::emulate_cycle()
                 V[0xF] = 0;
             }
             V[(opcode & 0x0F00) >> 8] += V[(opcode & 0x00F0) >> 4];
+            pc += 2;
             break;
         case 0x0005: // VY is subtracted from VX. VF is set to 0 when there's an underflow, and 1 when there is not.
             if (V[(opcode & 0x0F00) >> 8] >= V[(opcode & 0x00F0) >> 4])
@@ -339,10 +426,12 @@ void chip8::emulate_cycle()
                 V[0xF] = 0;
             }
             V[(opcode & 0x0F00) >> 8] -= V[(opcode & 0x00F0) >> 4];
+            pc += 2;
             break;
         case 0x0006: // Shifts VX to the right by 1, then stores the least significant bit of VX prior to the shift into VF
             V[0xF] = V[(opcode & 0x0F00) >> 8] & 0x01;
             V[(opcode & 0x0F00) >> 8] >>= 1;
+            pc += 2;
             break;
         case 0x0007: // Sets VX to VY - VX. VF is set to 0 when there's an underflow, and 1 when there is not.
             if (V[(opcode & 0x00F0) >> 4] >= V[(opcode & 0x0F00) >> 8])
@@ -354,16 +443,18 @@ void chip8::emulate_cycle()
                 V[0xF] = 0;
             }
             V[(opcode & 0x0F00) >> 8] = V[(opcode & 0x00F0) >> 4] - V[(opcode & 0x0F00) >> 8];
+            pc += 2;
             break;
         case 0x000E: // Shifts VX to the left by 1, then sets VF to 1 if the most significant bit of VX prior to that sift was set, or to 0 if it was unset.
             V[0xF] = (V[(opcode & 0x0F00) >> 8] & 0x80) >> 7;
             V[(opcode & 0x0F00) >> 8] <<= 1;
+            pc += 2;
             break;
         default:
-            std::cerr << "Unknown opcode: " << std::hex << opcode << std::endl;
+            std::cerr << "Unknown opcode: " << std::hex << opcode << " at PC: " << std::hex << pc << std::endl;
+            pc += 2;
             break;
         }
-        pc += 2;
         break;
     case 0x9000: // 0x9XY0 - Skips next instruction if VX does not equal VY.
         if (V[(opcode & 0x0F00) >> 8] != V[(opcode & 0x00F0) >> 4])
@@ -386,7 +477,7 @@ void chip8::emulate_cycle()
         V[(opcode & 0x0F00) >> 8] = (rand() % 256) & (opcode & 0x00FF);
         pc += 2;
         break;
-    case 0xD000: // 0xDXYN - Draws a sprite at coordinate (VX, VY) that has a width of 8 pixels and height of N pixels. Each row of 8 pixels is read as bit-coded starting from memory location I; I value does not change after the execution of this instruction. As described above, VF is set to 1 if any screen pixels are flipped from set to unset when the sprite is drawn, and to 0 if that does not happen.
+    case 0xD000: // 0xDXYN - Draws a sprite at coordinate (VX, VY) that has a width of 8 pixels and height of N pixels.
         V[0xF] = 0;
         for (int y = 0; y < (opcode & 0x000F); y++)
         {
@@ -439,7 +530,7 @@ void chip8::emulate_cycle()
             }
             break;
         default:
-            std::cerr << "Unknown opcode: " << std::hex << opcode << std::endl;
+            std::cerr << "Unknown opcode: " << std::hex << opcode << " at PC: " << std::hex << pc << std::endl;
             pc += 2;
             break;
         }
@@ -471,8 +562,7 @@ void chip8::emulate_cycle()
             break;
         }
         case 0x0015:
-        {
-            // 0xFX15 - Sets the delay timer to VX.
+        { // 0xFX15 - Sets the delay timer to VX.
             delay_timer = V[(opcode & 0x0F00) >> 8];
             pc += 2;
             break;
@@ -499,7 +589,7 @@ void chip8::emulate_cycle()
         }
         case 0x0033:
         {
-            // 0xFX33 - Stores the binary-coded decimal representation of VX, with the hundreds digit memory location in I, then the tens digit at location I+1, and the ones digit at location I+2.
+            // 0xFX33 - Stores the binary-coded decimal representation of VX
             unsigned char value = V[(opcode & 0x0F00) >> 8];
             if (I < 4093)
             {
@@ -515,7 +605,7 @@ void chip8::emulate_cycle()
             break;
         }
         case 0x0055:
-        { // 0xFX55 - Stores from V0 to VX (including VX) in memory, starting at address I. The offset from I is increased by 1 for each value written, but I itself is left unmodified.
+        { // 0xFX55 - Stores from V0 to VX in memory, starting at address I.
             int x = (opcode & 0x0F00) >> 8;
             if (I + x < 4096)
             {
@@ -523,7 +613,6 @@ void chip8::emulate_cycle()
                 {
                     memory[I + i] = V[i];
                 }
-                // I = I + x + 1; // Add this line for legacy compatibility
             }
             else
             {
@@ -534,7 +623,7 @@ void chip8::emulate_cycle()
         }
         case 0x0065:
         {
-            // 0xFX65 - Fills from V0 to VX (including VX) with values from memory, starting at address I. The offset from I is increased by 1 for each value read, but I itself is left unmodified.
+            // 0xFX65 - Fills from V0 to VX with values from memory, starting at address I.
             int x = (opcode & 0x0F00) >> 8;
             if (I + x < 4096)
             {
@@ -542,7 +631,6 @@ void chip8::emulate_cycle()
                 {
                     V[i] = memory[I + i];
                 }
-                // I = I + x + 1; // Add this line for legacy compatibility
             }
             else
             {
@@ -552,12 +640,13 @@ void chip8::emulate_cycle()
             break;
         }
         default:
-            std::cerr << "Unknown opcode: " << std::hex << opcode << std::endl;
+            std::cerr << "Unknown opcode: " << std::hex << opcode << " at PC: " << std::hex << pc << std::endl;
             pc += 2;
             break;
         }
+        break;
     default:
-        std::cerr << "Unknown opcode: " << std::hex << opcode << std::endl;
+        std::cerr << "Unknown opcode: " << std::hex << opcode << " at PC: " << std::hex << pc << std::endl;
         pc += 2;
         break;
     }
@@ -565,10 +654,12 @@ void chip8::emulate_cycle()
     if (delay_timer > 0)
         --delay_timer;
 
-    if (sound_timer > 0)
-    {
-        if (sound_timer == 1)
-            printf("Sound timer ended!\n");
+    if (sound_timer > 0) {
+        if (sound_timer == 1) {
+            stopBeep(); // Stop beep when timer reaches 1
+        } else if (sound_timer > 1 && !beepGen.active) {
+            startBeep(); // Start beep if not already playing
+        }
         --sound_timer;
     }
 }
@@ -577,7 +668,7 @@ void chip8::set_key(int key_index, bool pressed)
 {
     if (key_index >= 0 && key_index < 16)
     {
-        key[key_index] = pressed ? 1 : 0; // Set the key state
+        key[key_index] = pressed ? 1 : 0;
     }
     else
     {
@@ -600,6 +691,7 @@ int main(int argc, char *argv[])
     {
         return 1;
     }
+    initAudio();
 
     // Load ROM if provided
     if (argc > 1)
@@ -620,7 +712,7 @@ int main(int argc, char *argv[])
     // Main emulation loop
     const int targetFPS = 60;
     const int frameDelay = 1000 / targetFPS;
-    const int cyclesPerFrame = 10; // Instructions to execute per frame. Adjust this for speed.
+    const int cyclesPerFrame = 10; // Instructions to execute per frame
 
     Uint32 frameStart;
     int frameTime;
@@ -628,11 +720,11 @@ int main(int argc, char *argv[])
 
     std::cout << "Emulation started. Press ESC to quit." << std::endl;
 
-    while (!quit) // Use a flag instead of while(true)
+    while (!quit)
     {
         frameStart = SDL_GetTicks();
 
-        // Use a more robust event handling loop
+        // Handle events
         SDL_Event event;
         while (SDL_PollEvent(&event))
         {
@@ -640,18 +732,16 @@ int main(int argc, char *argv[])
             {
                 quit = true;
             }
-            // Pass the event to your input handler
-            handleInput(event); // Modify handleInput to take an SDL_Event
+            handleInput(event);
         }
 
-        // --- Execute multiple CPU cycles per frame ---
+        // Execute multiple CPU cycles per frame
         for (int i = 0; i < cyclesPerFrame; ++i)
         {
             myChip8.emulate_cycle();
         }
 
-        // Update timers (which happens inside emulate_cycle at 60Hz)
-        // and draw the screen if needed.
+        // Draw the screen if needed
         if (myChip8.drawFlag)
         {
             drawGraphics();
