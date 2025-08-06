@@ -394,14 +394,17 @@ void chip8::emulate_cycle()
             break;
         case 0x0001: // Sets VX to VX or VY (bitwise).
             V[(opcode & 0x0F00) >> 8] |= V[(opcode & 0x00F0) >> 4];
+            V[0xF] = 0; // Clear VF (Quirk)
             pc += 2;
             break;
         case 0x0002: // Sets VX to VX and VY (bitwise).
             V[(opcode & 0x0F00) >> 8] &= V[(opcode & 0x00F0) >> 4];
+            V[0xF] = 0; // Clear VF (Quirk)
             pc += 2;
             break;
         case 0x0003: // Sets VX to VX xor VY (bitwise).
             V[(opcode & 0x0F00) >> 8] ^= V[(opcode & 0x00F0) >> 4];
+            V[0xF] = 0; // Clear VF (Quirk)
             pc += 2;
             break;
         case 0x0004: // Adds VY to VX, VF is set to 1 when there is a overflow, and 0 when there is not.
@@ -539,18 +542,23 @@ void chip8::emulate_cycle()
         case 0x000A:
         { // 0xFX0A - A key press is awaited, and then stored in VX (blocking).
             bool keyPressed = false;
-            for (int i = 0; i < 16; i++)
+            while (!keyPressed)
             {
-                if (key[i] != 0)
+                SDL_Event event;
+                if (SDL_WaitEvent(&event) && event.type == SDL_EVENT_KEY_DOWN)
                 {
-                    V[(opcode & 0x0F00) >> 8] = i;
-                    keyPressed = true;
-                    break;
+                    for (int i = 0; i < 16; i++)
+                    {
+                        if (event.key.key == keyMap[i])
+                        {
+                            V[(opcode & 0x0F00) >> 8] = i;
+                            keyPressed = true;
+                            break;
+                        }
+                    }
                 }
-            }
-            if (!keyPressed)
-            {
-                return;
+                SDL_Delay(10);
+                if (delay_timer > 0) --delay_timer; // Always decrement delay_timer
             }
             pc += 2;
             break;
