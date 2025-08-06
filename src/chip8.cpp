@@ -40,6 +40,10 @@ const SDL_Keycode keyMap[16] = {
     SDLK_Q, SDLK_W, SDLK_E, SDLK_R, // Q W E R
     SDLK_A, SDLK_S, SDLK_D, SDLK_F, // A S D F
     SDLK_Z, SDLK_X, SDLK_C, SDLK_V  // Z X C V
+    SDLK_X, SDLK_1, SDLK_2, SDLK_3, // 1 2 3 4
+    SDLK_Q, SDLK_W, SDLK_E, SDLK_A, // Q W E R
+    SDLK_S, SDLK_D, SDLK_Z, SDLK_C, // A S D F
+    SDLK_4, SDLK_R, SDLK_F, SDLK_V  // Z X C V
 };
 
 bool loadROM(const std::string &filename)
