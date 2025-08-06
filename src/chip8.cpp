@@ -293,7 +293,7 @@ void chip8::initialize()
     }
 
     // Clear stack
-    for (unsigned char &i : stack)
+    for (unsigned short &i : stack)
     {
         i = 0;
     }
@@ -327,7 +327,7 @@ void chip8::emulate_cycle()
             break;
         case 0x00EE: // Return from subroutine
             --sp;
-            pc = stack[sp] + 0x200;
+            pc = stack[sp] + 2;;
             break;
         default:
             std::cerr << "Unknown opcode: " << std::hex << opcode << " at PC: " << std::hex << pc << std::endl;
@@ -343,7 +343,7 @@ void chip8::emulate_cycle()
             std::cerr << "Stack overflow!" << std::endl;
             return;
         }
-        stack[sp] = pc + 2;
+        stack[sp] = pc;
         ++sp;
         pc = opcode & 0x0FFF;
         break;
@@ -405,51 +405,45 @@ void chip8::emulate_cycle()
             pc += 2;
             break;
         case 0x0004: // Adds VY to VX, VF is set to 1 when there is a overflow, and 0 when there is not.
-            if (V[(opcode & 0x00F0) >> 4] > (0xFF - V[(opcode & 0x0F00) >> 8]))
-            {
-                V[0xF] = 1;
-            }
-            else
-            {
-                V[0xF] = 0;
-            }
+        {
+            unsigned char carry = (V[(opcode & 0x00F0) >> 4] > (0xFF - V[(opcode & 0x0F00) >> 8])) ? 1 : 0;
             V[(opcode & 0x0F00) >> 8] += V[(opcode & 0x00F0) >> 4];
+            V[0xF] = carry;
             pc += 2;
             break;
+        }
         case 0x0005: // VY is subtracted from VX. VF is set to 0 when there's an underflow, and 1 when there is not.
-            if (V[(opcode & 0x0F00) >> 8] >= V[(opcode & 0x00F0) >> 4])
-            {
-                V[0xF] = 1;
-            }
-            else
-            {
-                V[0xF] = 0;
-            }
+        {
+            unsigned char no_borrow = (V[(opcode & 0x0F00) >> 8] >= V[(opcode & 0x00F0) >> 4]) ? 1 : 0;
             V[(opcode & 0x0F00) >> 8] -= V[(opcode & 0x00F0) >> 4];
+            V[0xF] = no_borrow;
             pc += 2;
             break;
-        case 0x0006: // Shifts VX to the right by 1, then stores the least significant bit of VX prior to the shift into VF
-            V[0xF] = V[(opcode & 0x0F00) >> 8] & 0x01;
+        }
+        case 0x0006: // Shifts VX to the right by 1, then stores the LSB of VX prior to the shift into VF
+        {
+            unsigned char lsb = V[(opcode & 0x0F00) >> 8] & 0x01;
             V[(opcode & 0x0F00) >> 8] >>= 1;
+            V[0xF] = lsb;
             pc += 2;
             break;
+        }
         case 0x0007: // Sets VX to VY - VX. VF is set to 0 when there's an underflow, and 1 when there is not.
-            if (V[(opcode & 0x00F0) >> 4] >= V[(opcode & 0x0F00) >> 8])
-            {
-                V[0xF] = 1;
-            }
-            else
-            {
-                V[0xF] = 0;
-            }
+        {
+            unsigned char no_borrow = (V[(opcode & 0x00F0) >> 4] >= V[(opcode & 0x0F00) >> 8]) ? 1 : 0;
             V[(opcode & 0x0F00) >> 8] = V[(opcode & 0x00F0) >> 4] - V[(opcode & 0x0F00) >> 8];
+            V[0xF] = no_borrow;
             pc += 2;
             break;
-        case 0x000E: // Shifts VX to the left by 1, then sets VF to 1 if the most significant bit of VX prior to that sift was set, or to 0 if it was unset.
-            V[0xF] = (V[(opcode & 0x0F00) >> 8] & 0x80) >> 7;
+        }
+        case 0x000E: // Shifts VX to the left by 1, then sets VF to the MSB of VX prior to the shift
+        {
+            unsigned char msb = (V[(opcode & 0x0F00) >> 8] & 0x80) >> 7;
             V[(opcode & 0x0F00) >> 8] <<= 1;
+            V[0xF] = msb;
             pc += 2;
             break;
+        }
         default:
             std::cerr << "Unknown opcode: " << std::hex << opcode << " at PC: " << std::hex << pc << std::endl;
             pc += 2;

@@ -17,7 +17,7 @@ public:
     unsigned char sound_timer; // Sound timer
     unsigned char gfx[64 * 32]; // Graphics (64x32 pixels)
     unsigned char key[16]; // Keypad (16 keys)
-    unsigned char stack[16]; // Stack (16 levels)
+    unsigned short stack[16]; // Stack (16 levels)
     unsigned short sp; // Stack pointer
     bool drawFlag; // Flag to indicate if the screen should be redrawn
 };
